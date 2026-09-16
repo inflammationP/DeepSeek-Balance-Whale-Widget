@@ -157,6 +157,44 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 - 样式档：A=label（66u 600）、B=amount（128u 800）、P=period（104u 800）、C=hint（56u 灰 #9fb0d9）；`--dshw-u = var(--dshw-base)/1026`。
 - 随机段切换用**淡出淡入**（内联 opacity 过渡 190ms 出 / 220ms 入），与开合动画分离。
 
+### 对外接口：`window.dshWhaleWidget`（供桌面端外壳等宿主使用）
+
+挂件初始化完成后会暴露一个**只读**接口。它不是给 DSH 用的 —— DSH 里的挂件直接长在页面角落，不需要这些。
+它给的是另一种宿主：把挂件装进**独立窗口**的桌面端外壳（例如 Electron 桌宠）。
+
+那类宿主有一个共同难题：窗口铺满屏幕且必须**点穿**（否则挡住整个桌面），
+但鲸鱼和挂件面板又要能点。于是宿主必须在**窗口层**决定「这次鼠标事件归谁」，
+而判断依据只有挂件自己知道。
+
+```js
+window.dshWhaleWidget = {
+  version: 1,
+  isWhaleHit(x, y),   // 光标是否落在鲸鱼本体上（逐像素 alpha，含左吸附翻转）
+  isUiHit(x, y),      // 光标是否落在挂件自己吃的 UI 上（菜单/泡泡/各种面板）
+  whaleRect(),        // 鲸鱼图片当前的视口矩形 {left,top,right,bottom}，兜底/诊断用
+}
+```
+
+- 坐标是**视口坐标**（CSS 像素，即 `e.clientX/clientY`），返回布尔
+- `isUiHit` 与前端光标样式切换共用同一份选择器清单 `DSHW_UI_HIT_SELECTOR`（单一来源）
+
+**为什么要有它**：这两件事的判定逻辑（命中画布尺寸 610、alpha 阈值 10、`object-position:right bottom`
+的几何、左吸附翻转、面板清单）原本全在 `dshwInit` 内部。宿主若要在外面**复刻**一份，
+上游改任何一处它都会**静默失效**（鲸鱼点不到 / 某面板点不到，且不报错）。开这个口子是为了让宿主
+消费契约而不是复制内脏。
+
+**维护约定**：
+
+| 改动 | 要做什么 |
+|---|---|
+| 新增可交互面板 | 补进 `DSHW_UI_HIT_SELECTOR` 即可，宿主自动跟随 |
+| 改 `isWhaleHit` 语义 | 接口里已经包了一层，宿主不用动 |
+| 改接口签名 / 语义 | **`version` 加一**，宿主会检查并降级 |
+
+> ⚠ 从 Electron 侧调用要注意：`contextIsolation: true` 时 preload 与页面是**两个 JS 上下文**，
+> DOM 共享但 `window` 上的东西互相看不见 —— preload 读不到这个对象，
+> 必须在主进程用 `executeJavaScript` 在页面上下文里执行。
+
 ## 五、视觉与几何参数（精确值）
 
 | 项 | 值 |

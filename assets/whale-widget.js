@@ -47,6 +47,11 @@ var MIN_SCALE = 0.6
 var MAX_SCALE = 2.5
 var STEP = 0.1
 var CLICK_SQ = 9
+// —— 挂件「自己吃事件」的 UI 元素清单（单一来源）——
+// 光标样式切换、以及对外暴露的 isUiHit()，都从这里取。
+// 新增可交互面板时只改这一处。
+var DSHW_UI_HIT_SELECTOR = '.dshwv-pop,.dshwv-menu,.dshwv-menu-btn,.dshwv-rolelist,.dshwv-cropmask,.dshwv-confirmmask,.dshwv-audiolist,.dshwv-audiomask,.dshwv-snapmask,.dshwv-bubmask,.dshwv-qedit,.dshwv-usagepanel,.dshwv-usage-mask,.dshwv-resmask,.dshwv-custmenu,.dshwv-custbtn'
+
 var REFRESH_MS = 60000
 var CHANGE_MS = 900
 var ANIM_MS = 700
@@ -2429,7 +2434,8 @@ function openApiModelPanel(modelId) {
         // ② Base URL：中转站 / 自定义 / 本地模型需要
         baseRow.style.display = t.needsBaseUrl ? '' : 'none'
         // ③ 接口与字段：模板带什么就回填什么（v724，B 方案核心）。Codex 模式不需要这些行。
-        var isCodexT = t.kind === 'codex'
+        // 本地会话模式（Codex / Claude Code）不需要「余额接口与字段」那几行
+        var isCodexT = (t.kind === 'codex' || t.kind === 'claude_code')
         var tb = t.balance || {}
         var tj = tb.json || {}
         var tu = tb.usage || {}
@@ -2605,7 +2611,7 @@ function buildUsageSettingsArea() {
     var planOn = !!(am.planSupport && am.plan && am.plan.ok)
     var infoTxt = ''
     if (am.error) infoTxt = '⚠ ' + am.error
-    else if (am.codex && am.codex.ok) infoTxt = apiCodexRowText(am)
+    else if (am.codex && am.codex.ok) infoTxt = apiLocalRowText(am)
     else if (planOn) infoTxt = '厂商额度 ' + apiPlanSummary(am.id)
     else if (qOn) infoTxt = '额度 ' + apiQuotaSummary(am.id)
     else if (am.balanceMode === 'events') infoTxt = '余额 —（无接口·按事件）· 今日 ' + apiFmtMoney(am.todayUsage, apiTodayCur(am))
@@ -2683,7 +2689,7 @@ function openModelQuotaEditor(modelId) {
       var cur = money ? 'manual' : ((q.mode === 'manual' || q.mode === 'codex') ? q.mode : 'auto')
       var opts = money
         ? [['manual', '手动填写']]
-        : [['auto', '自动统计（按会话 token，推荐）'], ['codex', 'Codex 本地会话 token'], ['manual', '手动填写']]
+        : [['auto', '自动统计（按会话 token，推荐）'], ['codex', apiLocalLabel(apiLocalKindOf(modelId)) + ' 本地会话 token'], ['manual', '手动填写']]
       return apiSelectEl(opts, cur)
     }
     modeSel = buildModeSel()
@@ -2828,12 +2834,12 @@ function openApiModelMenu(modelId) {
     }, function () { openModelAlertBudget(modelId, 'budget', function () { openApiModelMenu(modelId) }) })
     rowOf('额度（订阅/资源包）', function () { return apiQuotaSummary(modelId) },
       function () { openModelQuotaEditor(modelId) })
-    // Codex 模式：只读展示本地会话统计（机器级）
+    // 本地会话模式（Codex / Claude Code）：只读展示本地会话统计（机器级）
     if (apiCodexOf(modelId) && apiCodexOf(modelId).ok) {
       var cr = document.createElement('div')
       cr.className = 'dshwv-audiorow'
       var cl = document.createElement('span')
-      cl.textContent = 'Codex 用量'
+      cl.textContent = apiLocalLabel(apiLocalKindOf(modelId)) + ' 用量'
       cl.style.flex = '0 0 auto'
       cr.appendChild(cl)
       var ci = document.createElement('span')
@@ -10440,12 +10446,31 @@ function apiQuotaSummary(modelId) {
   if (!q || !q.on) return '已关闭'
   var i = apiQuotaInfo(modelId)
   if (!i) return '已开启（未填总量）'
-  return (i.mode === 'codex' ? 'Codex · ' : (i.mode === 'auto' ? '自动 · ' : '手动 · ')) + '已用 ' + apiQuotaPctText(modelId) + ' · 剩 ' + apiFmtQuotaNum(i.left) + apiQuotaUnitSuffix(i)
+  return (i.mode === 'codex' ? apiLocalLabel(apiLocalKindOf(modelId)) + ' · ' : (i.mode === 'auto' ? '自动 · ' : '手动 · ')) + '已用 ' + apiQuotaPctText(modelId) + ' · 剩 ' + apiFmtQuotaNum(i.left) + apiQuotaUnitSuffix(i)
 }
-// —— Codex 模式：本地会话统计（host 读 ~/.codex/sessions 得到，机器级数据）——
+// —— 本地会话模式（Codex / Claude Code）：host 读本机会话日志得到，机器级数据 ——
+function apiTplById(id) {
+  for (var i = 0; i < apiTemplates.length; i++) if (apiTemplates[i].id === id) return apiTemplates[i]
+  return null
+}
+// 该模型属于哪种本地会话来源；不是本地会话模型就返回空串
+function apiLocalKindOf(modelId) {
+  var m = apiModelById(modelId)
+  var t = m ? apiTplById(m.provider) : null
+  var k = t && t.kind
+  return (k === 'codex' || k === 'claude_code') ? k : ''
+}
+function apiLocalLabel(kind) { return kind === 'claude_code' ? 'Claude Code' : 'Codex' }
+// 该模型下发的本地会话统计（host 侧字段名沿用 codex，两种来源共用）
 function apiCodexOf(modelId) {
   var m = apiModelById(modelId)
   return (m && m.codex) || null
+}
+// host 下发的 c.kind 优先（payload 里带），退回按模型自身模板判断
+function apiLocalKindOfEntry(am) {
+  var c = am && am.codex
+  if (c && c.kind) return c.kind
+  return am ? apiLocalKindOf(am.id) : 'codex'
 }
 function apiFmtTokens(n) {
   n = Number(n) || 0
@@ -10458,11 +10483,22 @@ function apiCodexDays7(c) {
   if (c && Array.isArray(c.days7)) for (var i = 0; i < c.days7.length; i++) s += Number(c.days7[i].tokens) || 0
   return s
 }
-// 列表行摘要
-function apiCodexRowText(am) {
+function apiLocalDays7Cost(c) {
+  var s = 0
+  if (c && Array.isArray(c.days7)) for (var i = 0; i < c.days7.length; i++) s += Number(c.days7[i].cost) || 0
+  return s
+}
+// 列表行摘要：本地会话的今日 / 近 7 天。
+// 能算钱的来源（Claude Code 记录的是 API 模型名，命中内置价目表）带金额；Codex 只有 token。
+function apiLocalRowText(am) {
   var c = am && am.codex
-  if (!c || !c.ok) return c && c.error ? ('⚠ ' + c.error) : '无 Codex 数据'
-  return 'Codex 今日 ' + apiFmtTokens(c.todayTokens) + ' · 近7天 ' + apiFmtTokens(apiCodexDays7(c)) + ' tokens'
+  if (!c || !c.ok) return c && c.error ? ('⚠ ' + c.error) : '无本地会话数据'
+  var label = apiLocalLabel(apiLocalKindOfEntry(am))
+  var todayCost = Number(c.todayCost) || 0
+  if (todayCost > 0 || Number(c.totalCost) > 0) {
+    return label + ' 今日 ' + apiFmtMoney(todayCost, 'CNY') + '（' + apiFmtTokens(c.todayTokens) + ' tokens）· 近7天 ' + apiFmtMoney(apiLocalDays7Cost(c), 'CNY')
+  }
+  return label + ' 今日 ' + apiFmtTokens(c.todayTokens) + ' · 近7天 ' + apiFmtTokens(apiCodexDays7(c)) + ' tokens'
 }
 // 第二期：订阅窗口（5h / 周）。host 已把 rate_limits 归一成 { primary, secondary, planType }
 function apiCodexWinLabel(w, idx) {
@@ -10496,10 +10532,14 @@ function apiCodexWindowsText(c) {
 // 详细摘要（子菜单只读行 / 编辑器提示）
 function apiCodexDetailText(modelId) {
   var c = apiCodexOf(modelId)
-  if (!c || !c.ok) return c && c.error ? c.error : '无 Codex 数据'
+  if (!c || !c.ok) return c && c.error ? c.error : '无本地会话数据'
   var s = '今日 ' + apiFmtTokens(c.todayTokens) + ' · 本月 ' + apiFmtTokens(c.monthTokens) +
     ' · 累计 ' + apiFmtTokens(c.totalTokens) + ' · 近7天 ' + apiFmtTokens(apiCodexDays7(c)) +
     '（' + (c.sessions || 0) + ' 个会话文件）'
+  // Claude Code：日志里是 API 模型名，命中内置价目表 → 能按峰谷价折成金额（Codex 只有 token）
+  if (Number(c.totalCost) > 0) {
+    s += ' · 折合 今日 ' + apiFmtMoney(c.todayCost, 'CNY') + ' / 本月 ' + apiFmtMoney(c.monthCost, 'CNY') + ' / 累计 ' + apiFmtMoney(c.totalCost, 'CNY')
+  }
   var w = apiCodexWindowsText(c)
   if (w) s += ' · ' + w
   return s
@@ -13764,7 +13804,7 @@ function onDocPointerMoveCursor(e) {
   if (drag && drag.active) { setWidgetCursor('grabbing'); return }
   var el = null
   try { el = document.elementFromPoint(e.clientX, e.clientY) } catch (err) {}
-  if (el && el.closest && (el.closest('.dshwv-pop') || el.closest('.dshwv-menu') || el.closest('.dshwv-menu-btn') || el.closest('.dshwv-rolelist') || el.closest('.dshwv-cropmask') || el.closest('.dshwv-confirmmask') || el.closest('.dshwv-audiolist') || el.closest('.dshwv-audiomask') || el.closest('.dshwv-snapmask') || el.closest('.dshwv-bubmask') || el.closest('.dshwv-qedit') || el.closest('.dshwv-usagepanel') || el.closest('.dshwv-usage-mask') || el.closest('.dshwv-resmask') || el.closest('.dshwv-custmenu') || el.closest('.dshwv-custbtn'))) {
+  if (el && el.closest && el.closest(DSHW_UI_HIT_SELECTOR)) {
     setWidgetCursor('')
     if (!menuBtnHide) menuBtn.classList.add('dshwv-menu-btn-visible')
     return
@@ -13866,6 +13906,42 @@ express()
 render()
 applySoundSet()
 setupHitTest(initRoleUrl)
+
+// —— 对外只读接口（给「桌面端外壳」这类宿主用）——
+// 为什么需要它：桌宠外壳要在**窗口层**决定「这次鼠标事件要不要归挂件」
+// （Electron 的 setIgnoreMouseEvents / 其它平台的等价物）。它必须知道两个问题：
+//   ① 光标在不在鲸鱼身上？  ② 光标在不在挂件自己的 UI 上？
+// 这两件事的判定逻辑都在本文件内部（逐像素 alpha 命中、UI 元素清单）。
+// 与其让外壳去**复刻**一份（画布尺寸、alpha 阈值、左吸附翻转、面板清单，
+// 上游改哪一处它都会静默失效），不如从这里开一个稳定出口。
+//
+// ⚠ 这是对外契约：
+//   - 加了新的可交互面板 → 补进 DSHW_UI_HIT_SELECTOR 即可，外壳自动跟随
+//   - 改了 isWhaleHit 的语义 → 这里包一层，外壳不用动
+//   - version 变了 → 外壳应检查并降级
+// 两个函数都收「视口坐标」（CSS 像素，即 e.clientX/clientY），返回布尔。
+try {
+  window.dshWhaleWidget = {
+    version: 1,
+    isWhaleHit: function (x, y) {
+      try { return isWhaleHit({ clientX: x, clientY: y }) } catch (err) { return false }
+    },
+    isUiHit: function (x, y) {
+      try {
+        var el = document.elementFromPoint(x, y)
+        return !!(el && el.closest && el.closest(DSHW_UI_HIT_SELECTOR))
+      } catch (err) { return false }
+    },
+    // 鲸鱼图片当前的视口矩形（外壳拿不到内部 img 时可用于兜底/诊断）
+    whaleRect: function () {
+      try {
+        var r = img.getBoundingClientRect()
+        return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+      } catch (err) { return null }
+    },
+  }
+} catch (err) {}
+
 loadRoles()
 loadAudio()
 // 用量设置(任务结束音/预警/预算)加载,并据此初始化主菜单“任务结束”行

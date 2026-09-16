@@ -4,6 +4,52 @@
 
 DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图 + DeepSeek API 余额 + 今日已用 + 每轮对话消耗，并且**泡泡内容可以完全自定义**（点击序列、模块化排版、并列加权出泡、随机语句/随机图片）。标准 DSH bundle 插件，`dsh plugin` 一键安装，无需任何会话令牌。
 
+---
+
+## 🐋 不想装 DSH？这一版能独立跑
+
+本仓库在原作者的基础上加了一个 **`cc/`** 目录：把小鲸鱼装进一个**独立的桌面窗口**，
+**完全不需要 DSH**。你只要有个 API key，就能看到余额和今日消费。
+
+| | |
+|---|---|
+| **形态** | 全屏透明层，鲸鱼浮在桌面上；空白处**自动点穿**，不挡你操作别的窗口 |
+| **交互** | 拖到屏幕任意位置 · 点它冒泡 · 右键菜单 · 音效 —— 原版功能一个不少 |
+| **原理** | 写了个 DSH 运行时替身，让原版插件以为自己在 DSH 里跑。**`lib/index.js` 与 `assets/whale-widget.js` 均保持原样**（除下面列出的新增） |
+
+**需要什么**：Node + Python（起服务开窗）。想要真·透明 + 可点击，再装个 Electron。
+
+```cmd
+cc\run.cmd            起服务 + 开桌宠
+cc\run.cmd web        只起服务，在浏览器里配（泡泡/音效/模型）
+cc\run.cmd stop       关掉
+cc\run.cmd --scale 1.2    调鲸鱼大小
+```
+
+📖 **完整说明见 [`cc/README.md`](cc/README.md)** —— 含原理、踩坑记录、以及「为什么必须用 Electron」。
+
+### 这一版相对原作者新增了什么
+
+- **`cc/`** —— 独立桌宠外壳（DSH 运行时替身 + Electron 窗口）
+- **Claude Code 数据源** —— 读 `~/.claude/projects/**/*.jsonl` 统计每轮消耗，与原有的 Codex 模式并列
+- **对外接口 `window.dshWhaleWidget`** —— 供桌面端外壳判断「光标在不在挂件上」，见 [`whale-widget-prompt.md`](whale-widget-prompt.md) 的「对外接口」一节
+- **`test/`** —— 两个自检（转录解析口径 / 宿主端到端）
+
+### 数据从哪来（重要）
+
+| 显示什么 | 依赖 |
+|---|---|
+| **余额** | 一个 HTTP 请求 + API key，**不限 harness** |
+| **今日已用** | **余额差**（两次余额观测之差），**不限 harness** |
+| 每轮消耗 / 额度 token 统计 | 会话日志，目前支持 Claude Code 与 Codex |
+
+> ⚠ 若厂商**没有余额查询接口**（Anthropic / OpenAI / Gemini / xAI 等约 14 家官方就不给）
+> 且又**没有会话日志**，那这个厂商下什么都显示不出来。DeepSeek 有余额接口，属于最好的情况。
+
+---
+
+> 以下是原作者写的 DSH 插件文档，**依然完全有效** —— 本仓库同样可以按它安装进 DSH。
+
 ## 特性
 
 ### 记账与显示
@@ -84,6 +130,20 @@ DeepSeek Harness（DSH）Web 界面右下角的常驻挂件：小鲸鱼气泡图
 - 🎯 **额度**：该模型的「额度」里，已用来源可选 **Codex 本地会话 token**（不重置＝累计−基准、每日＝今日、每月＝本月），复用同一套展示与泡泡模块
 - 🪟 **订阅窗口（5h / 周）**：日志里的 `rate_limits` 带窗口快照，有 ChatGPT 订阅时子菜单自动追加 `5h 已用 x% · 2小时30分后重置 | 周 已用 y% · 3天后重置`（字段名已做容错；API-key 计费或无订阅时该行不显示）
 
+### Claude Code 模式（本地会话统计）
+
+比 Codex 模式更进一步：Codex 只能给 token，**Claude Code 能直接折成人民币** —— 因为它的日志里记的是 API 模型名（`deepseek-flash`、`deepseek-v4-pro`…），直接命中内置峰谷价目表。
+
+- 📂 **数据来源**：`~/.claude/projects/<项目 slug>/<会话 uuid>.jsonl`（根目录可用 `$CLAUDE_CONFIG_DIR` 覆盖）；只读本机文件、**不联网、不需要密钥**，也不会写入 `~/.claude`
+- 🔢 **统计口径**：取 `type='assistant'` 行的 `message.usage`，模型归属由 `message.model` 判定，按天 + 模型聚合。⚠ **按 `message.id` 去重**：Claude Code 会把**一次 API 响应**按 content block 拆成多条 assistant 行（`apiBlockIndex` 0..N），每行携带逐字段完全相同的 `usage` —— 逐行求和会成倍多算（实测某会话 `cache_read` 491M vs 实际 207M），本挂件只取首条
+- 💰 **金额**：按记录自身的时间戳判定峰谷档（公式与账本每轮结算一致：缓存命中按命中价、输入与缓存写入按未命中价），缓存里存的是**按峰谷拆分的 token**、价格在汇总时才代入 —— 所以你改自定义单价后立刻生效，不用等重新解析
+- 🖥️ **显示**：模型列表显示 `Claude Code 今日 ¥1.23（1.2万 tokens）· 近7天 ¥8.90`；模型子菜单显示今日 / 本月 / 累计 / 近7天与会话文件数，并带「折合 今日 / 本月 / 累计」三个金额
+- 🎯 **额度**：该模型的「额度」里，已用来源选 **本地会话 token**（取值仍是历史的 `codex`，语义已泛化为「本地会话」），按模型模板自动决定读 Codex 还是 Claude Code
+
+> 用哪个模型由「厂商模板」决定：要挂 Claude Code 就在「小鲸鱼记账 → 模型」里加一个模型、厂商选 **Claude Code（本地会话）**。同一个挂件可以同时挂 Codex 和 Claude Code 两个模型，各算各的。
+>
+> ⚠ 挂件的**内置 DeepSeek 余额**和这个模式是两回事：余额走 `DEEPSEEK_API_KEY` 查官方接口，Claude Code 模式走本地日志。你的 Claude Code 若指向 DeepSeek（`ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`），两者金额可互相印证。
+
 ## 目录结构
 
 ```text
@@ -119,6 +179,7 @@ dsh-whale-widget/
 | `.dshw-api.json` | 自定义 API 模型注册表（厂商 / 凭据名 / 接口字段 / 自定义单价 / 额度与用量累计；**不含密钥**） |
 | `.dshw-usage-archive.json` | 账本归档（超过保留期的逐轮明细与逐日汇总；明细 90 天/2 万条、逐日 365 天） |
 | `.dshw-codex.json` | Codex 本地会话统计缓存（按天/模型聚合 + 文件偏移；**不含任何凭据**） |
+| `.dshw-claude.json` | Claude Code 本地会话统计缓存（同上；**不含任何凭据**，也不写 `~/.claude`） |
 | `whale-roles/` | 自定义角色图 + `roles.json` 索引 |
 | `whale-audio/` | 音频片段 `<id>.wav` + `audio.json` 索引（音效组/片段） |
 | `whale-bubble-imgs/` | 泡泡图库图片 + `bubble-imgs.json` 索引 |

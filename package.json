@@ -11,6 +11,9 @@
   ],
   "type": "module",
   "main": "lib/index.js",
+  "scripts": {
+    "test": "node test/parse-claude-transcript.test.mjs && node test/host-smoke.test.mjs"
+  },
   "files": [
     "lib",
     "assets",

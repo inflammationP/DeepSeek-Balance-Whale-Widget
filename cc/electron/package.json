@@ -1,0 +1,10 @@
+{
+  "name": "whale-cc-pet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "小鲸鱼桌宠的 Electron 外壳：全屏透明 + 按需接管鼠标（鲸鱼上可点，其余处点穿）",
+  "main": "main.js",
+  "dependencies": {
+    "electron": "^44.4.1"
+  }
+}
