@@ -160,6 +160,8 @@ cc/
 | `TOPMOST` 死活是 False | `ctypes.windll.user32` 不声明 `argtypes` 时按 `c_int` 传参，**64 位 HWND 被截断**，`SetWindowPos` 静默失败。`whale.py` 的 `_user32()` 就是干这个的 |
 | 置顶又掉了 | 改 `GWL_STYLE` 剥标题栏会让 Chromium 重建窗口、连带清掉 `WS_EX_TOPMOST`。所以**只调 `SetWindowPos`**，别碰样式 |
 | `run.cmd` 里中文变乱码 | cmd.exe 按 OEM 代码页读 `.cmd`。所以 `run.cmd` 全 ASCII，中文全在 `whale.py` 里输出 |
+| 双击 `run.cmd` 后任务栏一直挂着一个黑框 | 启动器要一直等着窗口（`p.wait` / `webview.start`），所以普通 `python` 会开个控制台陪跑到底。现在**无参数启动走 `pythonw`**（根本没有控制台），`stop/status/web/config` 仍走 `python`。代价：pythonw 下没有输出，启动失败会**弹框**，详情写进 `%TEMP%\whale-cc-launcher.log` |
+| `run.cmd stop` 说「没有开着的窗口」但其实有 | `kill_sibling_launchers` 的 PowerShell `-Filter` 上别写 `\"…\"`（反斜杠转义）：PowerShell 不认，整条查询静默失败，一个进程都杀不掉。而且它得同时列 `python.exe` **和 `pythonw.exe`** |
 | 白色方块底 / 整块实心色 | pywebview 那条路的两半透明没凑齐。直接用 Electron（见上） |
 | 鲸鱼点不到、什么都点穿 | 要么是 pywebview 的色键（整窗点穿），要么是 Electron 里光标坐标喂错了 —— 后者必须用主进程 `screen.getCursorScreenPoint()`，别信页面的 `mousemove` |
 | 拖拽拖到一半断掉 | 光标快速移动时短暂离开鲸鱼轮廓 → 切回点穿。`preload.js` 用 `dragging` 标志在按下期间强制保持可交互 |

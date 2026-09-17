@@ -39,6 +39,7 @@ PORT = int(os.environ.get("WHALE_CC_PORT", "3081"))
 URL = "http://127.0.0.1:%d/" % PORT
 TITLE = "小鲸鱼"
 LOG = os.path.join(tempfile.gettempdir(), "whale-cc.log")
+LAUNCH_LOG = os.path.join(tempfile.gettempdir(), "whale-cc-launcher.log")
 WHALE_HOME = os.environ.get("WHALE_CC_HOME") or os.path.join(os.path.expanduser("~"), ".whale-cc")
 SCALE_FILE = os.path.join(WHALE_HOME, ".dshw-size.json")
 
@@ -67,6 +68,22 @@ def set_scale(v):
     with open(SCALE_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False)
     return v
+
+
+NO_CONSOLE = sys.stdout is None   # pythonw 启动（run.cmd 双击那条路）：根本没有控制台
+
+
+def attach_launch_log():
+    """
+    pythonw 下没有控制台，print 等于扔进黑洞 —— 出问题会「双击了没反应」。
+    把输出接到日志文件上（有控制台时不动）。
+    """
+    if not NO_CONSOLE:
+        return
+    try:
+        sys.stdout = sys.stderr = open(LAUNCH_LOG, "w", encoding="utf-8", buffering=1)
+    except Exception:
+        pass
 
 
 def say(msg):
@@ -134,9 +151,13 @@ def kill_sibling_launchers():
     """
     me = os.getpid()
     try:
-        ps = (r"Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-              r"Where-Object {$_.CommandLine -like '*whale.py*'} | "
-              r"ForEach-Object { $_.ProcessId }")
+        # ⚠ 别在 -Filter 的参数上写反斜杠转义（`\"...\"`）：PowerShell 不认，整条查询
+        #    会静默报「无效查询」→ 一个进程都杀不掉，表现是 stop 说「没有开着的窗口」。
+        #    普通引号即可（subprocess 的 list2cmdline 会替我们加好外层引号）。
+        # pythonw.exe 也要列上 —— run.cmd 双击启动时跑的正是它。
+        ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\" | "
+              "Where-Object {$_.CommandLine -like '*whale.py*'} | "
+              "ForEach-Object { $_.ProcessId }")
         out = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
                              capture_output=True, text=True, timeout=20).stdout
     except Exception:
@@ -554,4 +575,13 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    attach_launch_log()
+    code = main()
+    if code and NO_CONSOLE:
+        # 没控制台又启动失败：弹个框，不然双击下去像是「什么都没发生」
+        try:
+            ctypes.windll.user32.MessageBoxW(None, "小鲸鱼启动失败，详情见 " + LAUNCH_LOG,
+                                             TITLE, 0x10)
+        except Exception:
+            pass
+    sys.exit(code)
